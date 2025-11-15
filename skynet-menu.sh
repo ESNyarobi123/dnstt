@@ -70,6 +70,16 @@ get_server_ip() {
     echo "$SERVER_IP"
 }
 
+# Get NS Domain
+get_ns_domain() {
+    if [ -f "$CONFIG_DIR/ns_domain.txt" ]; then
+        cat "$CONFIG_DIR/ns_domain.txt" | tr -d '\n\r '
+    else
+        # Fallback to IP if NS domain not set
+        get_server_ip
+    fi
+}
+
 # Get public key
 get_public_key() {
     if [ -f "$CONFIG_DIR/publickey.txt" ]; then
@@ -132,6 +142,7 @@ add_user() {
     
     # Save user info
     SERVER_IP=$(get_server_ip)
+    NS_DOMAIN=$(get_ns_domain)
     PUBLIC_KEY=$(get_public_key)
     
     cat > "$DATA_DIR/users/$username.conf" <<EOF
@@ -139,7 +150,7 @@ USERNAME=$username
 PASSWORD=$password
 EXPIRE_DATE=$expire_date
 CREATED_DATE=$(date +%Y-%m-%d)
-NAMESERVER=$SERVER_IP
+NAMESERVER=$NS_DOMAIN
 PUBLIC_KEY=$PUBLIC_KEY
 EOF
     
@@ -152,7 +163,7 @@ EOF
     echo -e "${CYAN}${BOLD}  Username:${NC}     ${GREEN}${BOLD}$username${NC}"
     echo -e "${CYAN}${BOLD}  Password:${NC}     ${GREEN}${BOLD}$password${NC}"
     echo -e "${CYAN}${BOLD}  Expire Date:${NC}  ${GREEN}${BOLD}$expire_date${NC}"
-    echo -e "${CYAN}${BOLD}  Nameserver (NS):${NC} ${GREEN}${BOLD}$SERVER_IP${NC}"
+    echo -e "${CYAN}${BOLD}  Nameserver (NS):${NC} ${GREEN}${BOLD}$NS_DOMAIN${NC}"
     echo -e "${CYAN}${BOLD}  Public Key:${NC}   ${GREEN}${BOLD}$PUBLIC_KEY${NC}"
     echo ""
     echo -e "${YELLOW}${BOLD}  ⚠ IMPORTANT:${NC} ${WHITE}Save this information securely!${NC}"
@@ -180,13 +191,15 @@ show_users() {
     fi
     
     SERVER_IP=$(get_server_ip)
+    NS_DOMAIN=$(get_ns_domain)
     PUBLIC_KEY=$(get_public_key)
     
     echo -e "${MAGENTA}${BOLD}╔═══════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${MAGENTA}${BOLD}║${NC} ${WHITE}${BOLD}              CURRENT SERVER INFORMATION${NC} ${MAGENTA}${BOLD}              ║${NC}"
     echo -e "${MAGENTA}${BOLD}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo -e "${CYAN}${BOLD}  Nameserver (NS):${NC} ${GREEN}${BOLD}$SERVER_IP${NC}"
+    echo -e "${CYAN}${BOLD}  Server IP:${NC}       ${GREEN}${BOLD}$SERVER_IP${NC}"
+    echo -e "${CYAN}${BOLD}  Nameserver (NS):${NC} ${GREEN}${BOLD}$NS_DOMAIN${NC}"
     echo -e "${CYAN}${BOLD}  Public Key:${NC}     ${GREEN}${BOLD}$PUBLIC_KEY${NC}"
     echo ""
     echo -e "${CYAN}${BOLD}═══════════════════════════════════════════════════════════════${NC}"
@@ -224,22 +237,27 @@ change_nameserver() {
     echo -e "${CYAN}${BOLD}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
     
-    CURRENT_NS=$(get_server_ip)
-    echo -e "${WHITE}Current Nameserver:${NC} ${GREEN}$CURRENT_NS${NC}"
+    CURRENT_NS=$(get_ns_domain)
+    echo -e "${WHITE}Current Nameserver (NS):${NC} ${GREEN}$CURRENT_NS${NC}"
     echo ""
-    
-    echo -ne "${CYAN}Enter New Nameserver IP: ${NC}"
+    echo -e "${YELLOW}${BOLD}Note:${NC} ${WHITE}Enter NS domain (e.g., ns-1.yourdomain.com), not IP!${NC}"
+    echo ""
+    echo -ne "${CYAN}Enter New NS Domain (e.g., ns-1.yourdomain.com): ${NC}"
     read new_ns
     
     if [ -z "$new_ns" ]; then
-        print_error "Nameserver cannot be empty!"
+        print_error "NS Domain cannot be empty!"
         sleep 2
         return
     fi
     
-    # Validate IP format (basic)
-    if ! [[ $new_ns =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-        print_error "Invalid IP format!"
+    # Trim and remove trailing dot
+    new_ns=$(echo "$new_ns" | xargs)
+    new_ns="${new_ns%.}"
+    
+    # Basic domain validation (must contain at least one dot)
+    if [[ ! "$new_ns" =~ \. ]]; then
+        print_error "Invalid domain format! Must be like: ns-1.yourdomain.com"
         sleep 2
         return
     fi
@@ -254,7 +272,7 @@ change_nameserver() {
     fi
     
     # Save to config
-    echo "$new_ns" > "$CONFIG_DIR/nameserver.txt"
+    echo "$new_ns" > "$CONFIG_DIR/ns_domain.txt"
     
     print_success "Nameserver changed to: $new_ns"
     echo ""
@@ -298,23 +316,65 @@ generate_new_key() {
     # Use dnstt-server binary to generate keys (better method)
     if [ -f "$INSTALL_DIR/dnstt-server" ]; then
         # Generate new keys using dnstt-server
-        "$INSTALL_DIR/dnstt-server" \
+        if "$INSTALL_DIR/dnstt-server" \
             -gen-key \
             -privkey-file "$CONFIG_DIR/privatekey.txt" \
-            -pubkey-file "$CONFIG_DIR/publickey.txt" > /dev/null 2>&1
-        
-        if [ -f "$CONFIG_DIR/publickey.txt" ] && [ -f "$CONFIG_DIR/privatekey.txt" ]; then
-            NEW_KEY=$(cat "$CONFIG_DIR/publickey.txt")
-            chmod 600 "$CONFIG_DIR/privatekey.txt"
-            chmod 644 "$CONFIG_DIR/publickey.txt"
-            print_success "Keys generated successfully using dnstt-server"
+            -pubkey-file "$CONFIG_DIR/publickey.txt" > /dev/null 2>&1; then
+            
+            if [ -f "$CONFIG_DIR/publickey.txt" ] && [ -f "$CONFIG_DIR/privatekey.txt" ]; then
+                NEW_KEY=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r ')
+                chmod 600 "$CONFIG_DIR/privatekey.txt"
+                chmod 644 "$CONFIG_DIR/publickey.txt"
+                print_success "Keys generated successfully using dnstt-server"
+            else
+                print_error "Key files were not created, trying fallback..."
+                NEW_KEY=""
+            fi
         else
-            print_error "Failed to generate keys using dnstt-server, trying fallback..."
+            print_error "dnstt-server key generation failed, trying fallback..."
             NEW_KEY=""
         fi
     else
-        print_warning "dnstt-server binary not found"
-        NEW_KEY=""
+        print_warning "dnstt-server binary not found at $INSTALL_DIR/dnstt-server"
+        print_info "Checking alternative locations..."
+        
+        # Try to find dnstt-server in common locations
+        DNSTT_BIN=""
+        if [ -f "/opt/skynet/dnstt-server" ]; then
+            DNSTT_BIN="/opt/skynet/dnstt-server"
+            print_info "Found dnstt-server at $DNSTT_BIN"
+        elif [ -f "/usr/local/bin/dnstt-server" ]; then
+            DNSTT_BIN="/usr/local/bin/dnstt-server"
+            print_info "Found dnstt-server at $DNSTT_BIN"
+        elif [ -f "/usr/bin/dnstt-server" ]; then
+            DNSTT_BIN="/usr/bin/dnstt-server"
+            print_info "Found dnstt-server at $DNSTT_BIN"
+        fi
+        
+        if [ -n "$DNSTT_BIN" ] && [ -f "$DNSTT_BIN" ]; then
+            # Use found binary to generate keys
+            if "$DNSTT_BIN" \
+                -gen-key \
+                -privkey-file "$CONFIG_DIR/privatekey.txt" \
+                -pubkey-file "$CONFIG_DIR/publickey.txt" > /dev/null 2>&1; then
+                
+                if [ -f "$CONFIG_DIR/publickey.txt" ] && [ -f "$CONFIG_DIR/privatekey.txt" ]; then
+                    NEW_KEY=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r ')
+                    chmod 600 "$CONFIG_DIR/privatekey.txt"
+                    chmod 644 "$CONFIG_DIR/publickey.txt"
+                    print_success "Keys generated successfully using dnstt-server"
+                else
+                    print_error "Key files were not created"
+                    NEW_KEY=""
+                fi
+            else
+                print_error "Key generation failed with found binary"
+                NEW_KEY=""
+            fi
+        else
+            print_error "dnstt-server binary not found anywhere!"
+            NEW_KEY=""
+        fi
     fi
     
     # Fallback method if dnstt-server method failed
@@ -396,6 +456,7 @@ show_server_info() {
     echo ""
     
     SERVER_IP=$(get_server_ip)
+    NS_DOMAIN=$(get_ns_domain)
     PUBLIC_KEY=$(get_public_key)
     USER_COUNT=$(ls -1 "$DATA_DIR/users"/*.conf 2>/dev/null | wc -l)
     
@@ -404,7 +465,7 @@ show_server_info() {
     echo -e "${MAGENTA}${BOLD}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${CYAN}${BOLD}  Server IP:${NC}       ${GREEN}${BOLD}$SERVER_IP${NC}"
-    echo -e "${CYAN}${BOLD}  Nameserver (NS):${NC}  ${GREEN}${BOLD}$SERVER_IP${NC}"
+    echo -e "${CYAN}${BOLD}  Nameserver (NS):${NC}  ${GREEN}${BOLD}$NS_DOMAIN${NC}"
     echo -e "${CYAN}${BOLD}  Public Key:${NC}      ${GREEN}${BOLD}$PUBLIC_KEY${NC}"
     echo -e "${CYAN}${BOLD}  Total Users:${NC}     ${GREEN}${BOLD}$USER_COUNT${NC}"
     echo ""

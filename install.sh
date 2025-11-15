@@ -24,6 +24,9 @@ DATA_DIR="/var/lib/skynet"
 LOG_DIR="/var/log/skynet"
 BIN_DIR="/usr/local/bin"
 
+# NS Domain (will be set during installation)
+NS_DOMAIN=""
+
 # Banner
 show_banner() {
     clear
@@ -172,16 +175,32 @@ install_dnstt() {
         print_info "dnstt-server already exists, skipping download"
     fi
     
-    # Generate keys if not exists
+    # Keys will be generated after dnstt-server is compiled
+    print_info "Keys will be generated after dnstt-server compilation..."
+    
+    # Generate keys now that dnstt-server is available
+    generate_keys
+    
+    # Configure DNS for 512/1800 bytes handling
+    configure_dns_bytes
+    
+    # Create systemd service
+    create_service
+    
+    print_success "dnstt installed"
+}
+
+# Generate keys function (called after dnstt-server is compiled)
+generate_keys() {
     if [ ! -f "$CONFIG_DIR/publickey.txt" ] || [ ! -f "$CONFIG_DIR/privatekey.txt" ]; then
         print_info "Generating keys using dnstt-server..."
         
         if [ -f "$INSTALL_DIR/dnstt-server" ]; then
-            # Use dnstt-server binary to generate keys (better method)
+            # Use dnstt-server binary to generate keys (proper method)
             "$INSTALL_DIR/dnstt-server" \
                 -gen-key \
                 -privkey-file "$CONFIG_DIR/privatekey.txt" \
-                -pubkey-file "$CONFIG_DIR/publickey.txt" 2>&1
+                -pubkey-file "$CONFIG_DIR/publickey.txt" > /dev/null 2>&1
             
             if [ -f "$CONFIG_DIR/privatekey.txt" ] && [ -f "$CONFIG_DIR/publickey.txt" ]; then
                 chmod 600 "$CONFIG_DIR/privatekey.txt"
@@ -204,22 +223,17 @@ install_dnstt() {
                     else
                         print_error "Failed to generate keys"
                     fi
+                else
+                    print_error "Cannot generate keys - dnstt-keygen directory not found"
                 fi
             fi
         else
-            print_warning "dnstt-server binary not found, keys will be generated later"
+            print_error "dnstt-server binary not found! Cannot generate keys."
+            return 1
         fi
     else
         print_info "Keys already exist, skipping generation"
     fi
-    
-    # Configure DNS for 512/1800 bytes handling
-    configure_dns_bytes
-    
-    # Create systemd service
-    create_service
-    
-    print_success "dnstt installed"
 }
 
 # Configure DNS bytes handling (512/1800)
@@ -371,6 +385,54 @@ install_menu_script() {
     print_success "Menu command 'skynet-menu' is now available"
 }
 
+# Prompt for NS Domain
+prompt_ns_domain() {
+    echo ""
+    echo -e "${CYAN}${BOLD}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${WHITE}${BOLD}              NAMESERVER (NS) DOMAIN CONFIGURATION${NC}"
+    echo -e "${CYAN}${BOLD}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "${YELLOW}${BOLD}IMPORTANT:${NC} ${WHITE}Slow DNS requires a NS (Nameserver) domain, not just IP!${NC}"
+    echo ""
+    echo -e "${WHITE}Example DNS setup (in your domain registrar/control panel):${NC}"
+    echo -e "${GREEN}  A   ns-1.yourdomain.com   ->  IP of this VPS${NC}"
+    echo -e "${GREEN}  NS  t.yourdomain.com     ->  ns-1.yourdomain.com${NC}"
+    echo ""
+    echo -e "${WHITE}You need to enter the NS domain (nameserver domain), example:${NC}"
+    echo -e "${GREEN}  ns-1.yourdomain.com${NC}"
+    echo -e "${GREEN}  dns.myserver.com${NC}"
+    echo -e "${GREEN}  ns1.example.com${NC}"
+    echo ""
+    echo -ne "${CYAN}${BOLD}Enter NS Domain (e.g., ns-1.yourdomain.com): ${NC}"
+    read user_ns_domain
+    
+    # Trim whitespace
+    user_ns_domain=$(echo "$user_ns_domain" | xargs)
+    
+    if [ -z "$user_ns_domain" ]; then
+        print_error "NS Domain cannot be empty! Slow DNS requires a NS domain."
+        echo ""
+        echo -e "${YELLOW}Please run the installation again and provide a valid NS domain.${NC}"
+        exit 1
+    fi
+    
+    # Remove trailing dot if exists
+    user_ns_domain="${user_ns_domain%.}"
+    
+    NS_DOMAIN="$user_ns_domain"
+    
+    # Save to config
+    mkdir -p "$CONFIG_DIR"
+    echo "$NS_DOMAIN" > "$CONFIG_DIR/ns_domain.txt"
+    
+    print_success "NS Domain set to: ${GREEN}$NS_DOMAIN${NC}"
+    echo ""
+    echo -e "${YELLOW}${BOLD}⚠ REMEMBER:${NC} ${WHITE}Make sure this NS domain ($NS_DOMAIN) has an A record${NC}"
+    echo -e "${WHITE}pointing to this server's IP in your DNS control panel!${NC}"
+    echo ""
+    sleep 2
+}
+
 # Get server IP
 get_server_ip() {
     SERVER_IP=$(curl -s ifconfig.me || curl -s ipinfo.io/ip || curl -s icanhazip.com)
@@ -385,10 +447,14 @@ main_install() {
     echo ""
     
     check_root
+    
+    # Prompt for NS Domain FIRST (required for Slow DNS)
+    prompt_ns_domain
+    
     configure_system
     install_dependencies
     
-    # Try to install dnstt, but continue even if it fails
+    # Install dnstt (this will also generate keys)
     if ! install_dnstt; then
         print_warning "dnstt installation had issues, but continuing..."
     fi
@@ -404,6 +470,11 @@ main_install() {
         PUBLIC_KEY="Not generated"
     fi
     
+    # Load NS Domain
+    if [ -f "$CONFIG_DIR/ns_domain.txt" ]; then
+        NS_DOMAIN=$(cat "$CONFIG_DIR/ns_domain.txt")
+    fi
+    
     echo ""
     echo -e "${CYAN}${BOLD}═══════════════════════════════════════════════════════════════${NC}"
     echo -e "${GREEN}${BOLD}           Installation Completed Successfully!${NC}"
@@ -414,7 +485,7 @@ main_install() {
     echo -e "${MAGENTA}${BOLD}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${CYAN}${BOLD}  Server IP:${NC}     ${GREEN}${BOLD}$SERVER_IP${NC}"
-    echo -e "${CYAN}${BOLD}  Nameserver (NS):${NC} ${GREEN}${BOLD}$SERVER_IP${NC}"
+    echo -e "${CYAN}${BOLD}  Nameserver (NS):${NC} ${GREEN}${BOLD}${NS_DOMAIN:-$SERVER_IP}${NC}"
     echo -e "${CYAN}${BOLD}  Public Key:${NC}   ${GREEN}${BOLD}$PUBLIC_KEY${NC}"
     echo ""
     echo -e "${YELLOW}${BOLD}  DNS Configuration:${NC} ${GREEN}8.8.8.8, 8.8.4.4 (Google DNS)${NC}"
