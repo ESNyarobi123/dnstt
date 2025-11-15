@@ -238,7 +238,14 @@ generate_keys() {
             if [ -f "$CONFIG_DIR/privatekey.txt" ] && [ -f "$CONFIG_DIR/publickey.txt" ]; then
                 chmod 600 "$CONFIG_DIR/privatekey.txt"
                 chmod 644 "$CONFIG_DIR/publickey.txt"
-                print_success "Keys generated successfully"
+                # Clean and save public key without newlines/whitespace
+                CLEANED_KEY=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r\t ' | sed 's/[^0-9a-fA-F]//g')
+                if [ ${#CLEANED_KEY} -eq 44 ]; then
+                    echo -n "$CLEANED_KEY" > "$CONFIG_DIR/publickey.txt"
+                    print_success "Keys generated successfully"
+                else
+                    print_warning "Generated key has invalid length: ${#CLEANED_KEY} (expected: 44)"
+                fi
             else
                 print_error "Key generation failed, trying alternative method..."
                 # Fallback to keygen tool
@@ -248,11 +255,18 @@ generate_keys() {
                     PRIVATE_KEY=$(grep "Private key:" "$CONFIG_DIR/keygen_output.txt" | awk '{print $3}')
                     PUBLIC_KEY=$(grep "Public key:" "$CONFIG_DIR/keygen_output.txt" | awk '{print $3}')
                     if [ -n "$PRIVATE_KEY" ] && [ -n "$PUBLIC_KEY" ]; then
-                        echo "$PRIVATE_KEY" > "$CONFIG_DIR/privatekey.txt"
-                        echo "$PUBLIC_KEY" > "$CONFIG_DIR/publickey.txt"
+                        # Clean the keys - remove whitespace/newlines
+                        CLEANED_PRIVATE=$(echo "$PRIVATE_KEY" | tr -d '\n\r\t ' | sed 's/[^0-9a-fA-F]//g')
+                        CLEANED_PUBLIC=$(echo "$PUBLIC_KEY" | tr -d '\n\r\t ' | sed 's/[^0-9a-fA-F]//g')
+                        echo -n "$CLEANED_PRIVATE" > "$CONFIG_DIR/privatekey.txt"
+                        echo -n "$CLEANED_PUBLIC" > "$CONFIG_DIR/publickey.txt"
                         chmod 600 "$CONFIG_DIR/privatekey.txt"
                         chmod 644 "$CONFIG_DIR/publickey.txt"
-                        print_success "Keys generated using fallback method"
+                        if [ ${#CLEANED_PUBLIC} -eq 44 ]; then
+                            print_success "Keys generated using fallback method"
+                        else
+                            print_warning "Public key has invalid length: ${#CLEANED_PUBLIC} (expected: 44)"
+                        fi
                     else
                         print_error "Failed to generate keys"
                     fi
@@ -275,12 +289,13 @@ ensure_public_key_generated() {
     
     # Check if public key exists and is valid
     if [ -f "$CONFIG_DIR/publickey.txt" ] && [ -f "$CONFIG_DIR/privatekey.txt" ]; then
-        PUBLIC_KEY_CONTENT=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r ' | head -c 44)
-        if [ -n "$PUBLIC_KEY_CONTENT" ] && [ ${#PUBLIC_KEY_CONTENT} -ge 40 ]; then
+        # Read and clean the key - dnstt public keys are exactly 44 hex characters
+        PUBLIC_KEY_CONTENT=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r\t ' | sed 's/[^0-9a-fA-F]//g')
+        if [ -n "$PUBLIC_KEY_CONTENT" ] && [ ${#PUBLIC_KEY_CONTENT} -eq 44 ]; then
             print_success "Public key verified: $PUBLIC_KEY_CONTENT"
             return 0
         else
-            print_warning "Public key file exists but appears invalid, regenerating..."
+            print_warning "Public key file exists but appears invalid (length: ${#PUBLIC_KEY_CONTENT}, expected: 44), regenerating..."
             rm -f "$CONFIG_DIR/publickey.txt" "$CONFIG_DIR/privatekey.txt"
         fi
     fi
@@ -298,10 +313,15 @@ ensure_public_key_generated() {
         if [ -f "$CONFIG_DIR/publickey.txt" ] && [ -f "$CONFIG_DIR/privatekey.txt" ]; then
             chmod 600 "$CONFIG_DIR/privatekey.txt"
             chmod 644 "$CONFIG_DIR/publickey.txt"
-            PUBLIC_KEY_CONTENT=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r ' | head -c 44)
-            if [ -n "$PUBLIC_KEY_CONTENT" ] && [ ${#PUBLIC_KEY_CONTENT} -ge 40 ]; then
+            # Clean and verify the key - should be exactly 44 hex characters
+            PUBLIC_KEY_CONTENT=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r\t ' | sed 's/[^0-9a-fA-F]//g')
+            if [ -n "$PUBLIC_KEY_CONTENT" ] && [ ${#PUBLIC_KEY_CONTENT} -eq 44 ]; then
+                # Save cleaned key back to file (without newlines/whitespace)
+                echo -n "$PUBLIC_KEY_CONTENT" > "$CONFIG_DIR/publickey.txt"
                 print_success "Public key generated successfully: $PUBLIC_KEY_CONTENT"
                 return 0
+            else
+                print_warning "Generated key has invalid length: ${#PUBLIC_KEY_CONTENT} (expected: 44)"
             fi
         fi
     fi
@@ -320,14 +340,21 @@ ensure_public_key_generated() {
                 PUBLIC_KEY=$(grep -oP 'Public key: \K[^\s]+' "$CONFIG_DIR/keygen_final_output.txt" 2>/dev/null | head -n 1)
             fi
             if [ -n "$PRIVATE_KEY" ] && [ -n "$PUBLIC_KEY" ]; then
-                echo "$PRIVATE_KEY" > "$CONFIG_DIR/privatekey.txt"
-                echo "$PUBLIC_KEY" > "$CONFIG_DIR/publickey.txt"
+                # Clean the keys - remove whitespace/newlines
+                CLEANED_PRIVATE=$(echo "$PRIVATE_KEY" | tr -d '\n\r\t ' | sed 's/[^0-9a-fA-F]//g')
+                CLEANED_PUBLIC=$(echo "$PUBLIC_KEY" | tr -d '\n\r\t ' | sed 's/[^0-9a-fA-F]//g')
+                echo -n "$CLEANED_PRIVATE" > "$CONFIG_DIR/privatekey.txt"
+                echo -n "$CLEANED_PUBLIC" > "$CONFIG_DIR/publickey.txt"
                 chmod 600 "$CONFIG_DIR/privatekey.txt"
                 chmod 644 "$CONFIG_DIR/publickey.txt"
-                print_success "Public key generated using fallback method: $PUBLIC_KEY"
-                cd /tmp
-                rm -rf dnstt-keygen-final
-                return 0
+                if [ ${#CLEANED_PUBLIC} -eq 44 ]; then
+                    print_success "Public key generated using fallback method: $CLEANED_PUBLIC"
+                    cd /tmp
+                    rm -rf dnstt-keygen-final
+                    return 0
+                else
+                    print_warning "Public key has invalid length: ${#CLEANED_PUBLIC} (expected: 44)"
+                fi
             fi
             cd /tmp
             rm -rf dnstt-keygen-final
@@ -612,7 +639,11 @@ main_install() {
     # Get server information
     SERVER_IP=$(get_server_ip)
     if [ -f "$CONFIG_DIR/publickey.txt" ]; then
-        PUBLIC_KEY=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r ' | head -c 44)
+        # Clean the public key - remove all whitespace/newlines, keep only hex chars
+        PUBLIC_KEY=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r\t ' | sed 's/[^0-9a-fA-F]//g')
+        if [ ${#PUBLIC_KEY} -ne 44 ]; then
+            PUBLIC_KEY="Invalid key (length: ${#PUBLIC_KEY}, expected: 44)"
+        fi
     else
         PUBLIC_KEY="Not generated - Please run 'skynet-menu' option 4"
     fi
@@ -642,11 +673,18 @@ main_install() {
     echo -e "${MAGENTA}${BOLD}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     if [ -f "$CONFIG_DIR/publickey.txt" ]; then
-        FULL_PUBLIC_KEY=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r ')
-        echo -e "${CYAN}${BOLD}  Public Key (copy hii kwenye client):${NC}"
-        echo -e "${GREEN}${BOLD}  $FULL_PUBLIC_KEY${NC}"
-        echo ""
-        echo -e "${YELLOW}${BOLD}  ⚠ IMPORTANT:${NC} ${WHITE}Save this public key securely!${NC}"
+        # Clean the public key - remove all whitespace/newlines, keep only hex chars
+        FULL_PUBLIC_KEY=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r\t ' | sed 's/[^0-9a-fA-F]//g')
+        if [ ${#FULL_PUBLIC_KEY} -eq 44 ]; then
+            echo -e "${CYAN}${BOLD}  Public Key (copy hii kwenye client):${NC}"
+            echo -e "${GREEN}${BOLD}  $FULL_PUBLIC_KEY${NC}"
+            echo ""
+            echo -e "${YELLOW}${BOLD}  ⚠ IMPORTANT:${NC} ${WHITE}Save this public key securely!${NC}"
+            echo -e "${YELLOW}${BOLD}  ⚠ NOTE:${NC} ${WHITE}Key length: ${#FULL_PUBLIC_KEY} characters (should be 44)${NC}"
+        else
+            echo -e "${RED}${BOLD}  Public Key:${NC} ${RED}Invalid (length: ${#FULL_PUBLIC_KEY}, expected: 44)${NC}"
+            echo -e "${YELLOW}${BOLD}  ⚠ WARNING:${NC} ${WHITE}Please run 'skynet-menu' and select option 4 to regenerate it${NC}"
+        fi
     else
         echo -e "${RED}${BOLD}  Public Key:${NC} ${RED}Not generated${NC}"
         echo -e "${YELLOW}${BOLD}  ⚠ WARNING:${NC} ${WHITE}Please run 'skynet-menu' and select option 4 to generate it${NC}"

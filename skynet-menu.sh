@@ -83,8 +83,9 @@ get_ns_domain() {
 # Get public key
 get_public_key() {
     if [ -f "$CONFIG_DIR/publickey.txt" ]; then
-        # Read and trim the key
-        cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r ' | head -c 44
+        # Read and clean the key - remove all whitespace and newlines, but keep full key
+        # Dnstt public keys are exactly 44 hex characters
+        cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r\t ' | sed 's/[^0-9a-fA-F]//g'
     else
         echo "Not generated"
     fi
@@ -431,8 +432,20 @@ generate_new_key() {
         return 1
     fi
     
-    # Read the actual key from file
-    NEW_KEY=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r ')
+    # Read and clean the actual key from file
+    # Remove all whitespace/newlines and keep only hex characters
+    NEW_KEY=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r\t ' | sed 's/[^0-9a-fA-F]//g')
+    
+    # Verify key length
+    if [ ${#NEW_KEY} -ne 44 ]; then
+        print_error "Generated key has invalid length: ${#NEW_KEY} (expected: 44)"
+        print_info "Please try generating again"
+        sleep 3
+        return 1
+    fi
+    
+    # Save cleaned key back to file (without newlines/whitespace)
+    echo -n "$NEW_KEY" > "$CONFIG_DIR/publickey.txt"
     
     # Update all users
     if [ -d "$DATA_DIR/users" ]; then
