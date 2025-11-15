@@ -83,9 +83,28 @@ get_ns_domain() {
 # Get public key
 get_public_key() {
     if [ -f "$CONFIG_DIR/publickey.txt" ]; then
-        # Read and clean the key - remove all whitespace and newlines, but keep full key
-        # Dnstt public keys are exactly 44 hex characters
-        cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r\t ' | sed 's/[^0-9a-fA-F]//g'
+        # Read and clean the key - remove all whitespace and newlines
+        # Dnstt public keys can be 44 chars (base64url) or 64 chars (hex)
+        RAW_KEY=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r\t ')
+        
+        # Check if it's hex format (64) and convert to base64url (44) for display
+        HEX_KEY=$(echo "$RAW_KEY" | sed 's/[^0-9a-fA-F]//g')
+        if [ ${#HEX_KEY} -eq 64 ] && [ "$HEX_KEY" = "$RAW_KEY" ]; then
+            # Convert hex to base64url
+            HEX_KEY_LOWER=$(echo "$HEX_KEY" | tr '[:upper:]' '[:lower:]')
+            if command -v xxd >/dev/null 2>&1; then
+                BASE64URL_KEY=$(echo "$HEX_KEY_LOWER" | xxd -r -p | base64 | tr -d '\n' | tr '+/' '-_' | tr -d '=')
+                if [ ${#BASE64URL_KEY} -eq 44 ]; then
+                    # Save converted key
+                    echo -n "$BASE64URL_KEY" > "$CONFIG_DIR/publickey.txt"
+                    echo "$BASE64URL_KEY"
+                    return
+                fi
+            fi
+        fi
+        
+        # Return as is (44 base64url or 64 hex)
+        echo "$RAW_KEY"
     else
         echo "Not generated"
     fi
@@ -433,12 +452,34 @@ generate_new_key() {
     fi
     
     # Read and clean the actual key from file
-    # Remove all whitespace/newlines and keep only hex characters
-    NEW_KEY=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r\t ' | sed 's/[^0-9a-fA-F]//g')
+    RAW_KEY=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r\t ')
     
-    # Verify key length
-    if [ ${#NEW_KEY} -ne 44 ]; then
-        print_error "Generated key has invalid length: ${#NEW_KEY} (expected: 44)"
+    # Check format and convert if needed
+    HEX_KEY=$(echo "$RAW_KEY" | sed 's/[^0-9a-fA-F]//g')
+    BASE64_KEY=$(echo "$RAW_KEY" | sed 's/[^0-9a-zA-Z_-]//g')
+    
+    # If it's 64 hex characters, convert to base64url (44 chars) for client compatibility
+    if [ ${#HEX_KEY} -eq 64 ] && [ "$HEX_KEY" = "$RAW_KEY" ]; then
+        print_info "Converting hex format to base64url format..."
+        HEX_KEY_LOWER=$(echo "$HEX_KEY" | tr '[:upper:]' '[:lower:]')
+        if command -v xxd >/dev/null 2>&1; then
+            NEW_KEY=$(echo "$HEX_KEY_LOWER" | xxd -r -p | base64 | tr -d '\n' | tr '+/' '-_' | tr -d '=')
+        else
+            NEW_KEY=$(printf "%s" "$HEX_KEY_LOWER" | sed 's/../\\x&/g' | xargs -0 printf 2>/dev/null | base64 | tr -d '\n' | tr '+/' '-_' | tr -d '=' || echo "")
+        fi
+        if [ ${#NEW_KEY} -ne 44 ]; then
+            print_error "Failed to convert key (result length: ${#NEW_KEY}, expected: 44)"
+            sleep 3
+            return 1
+        fi
+    # If it's already 44 characters (base64url), use it
+    elif [ ${#BASE64_KEY} -eq 44 ] && [ "$BASE64_KEY" = "$RAW_KEY" ]; then
+        NEW_KEY="$BASE64_KEY"
+    # If it's 44 hex characters, use it
+    elif [ ${#HEX_KEY} -eq 44 ]; then
+        NEW_KEY="$HEX_KEY"
+    else
+        print_error "Generated key has invalid format (length: ${#RAW_KEY}, expected: 44 or 64)"
         print_info "Please try generating again"
         sleep 3
         return 1

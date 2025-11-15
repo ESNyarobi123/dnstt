@@ -53,14 +53,62 @@ print_info "Reading current public key..."
 CURRENT_KEY=$(cat "$CONFIG_DIR/publickey.txt")
 print_info "Current key (raw): $CURRENT_KEY"
 
-# Clean the key - remove all whitespace/newlines, keep only hex characters
-CLEANED_KEY=$(echo "$CURRENT_KEY" | tr -d '\n\r\t ' | sed 's/[^0-9a-fA-F]//g')
+# Clean the key - remove all whitespace/newlines
+CLEANED_KEY=$(echo "$CURRENT_KEY" | tr -d '\n\r\t ')
 
 print_info "Cleaned key: $CLEANED_KEY"
 print_info "Key length: ${#CLEANED_KEY} characters"
 
-# Verify key length (should be exactly 44 hex characters)
-if [ ${#CLEANED_KEY} -ne 44 ]; then
+# Check if it's hex format (64) or base64url format (44)
+HEX_KEY=$(echo "$CLEANED_KEY" | sed 's/[^0-9a-fA-F]//g')
+BASE64_KEY=$(echo "$CLEANED_KEY" | sed 's/[^0-9a-zA-Z_-]//g')
+
+# If it's 64 hex characters, convert to base64url (44 chars) for client compatibility
+if [ ${#HEX_KEY} -eq 64 ] && [ "$HEX_KEY" = "$CLEANED_KEY" ]; then
+    print_info "Detected hex format (64 chars), converting to base64url format (44 chars)..."
+    HEX_KEY_LOWER=$(echo "$HEX_KEY" | tr '[:upper:]' '[:lower:]')
+    if command -v xxd >/dev/null 2>&1; then
+        CONVERTED_KEY=$(echo "$HEX_KEY_LOWER" | xxd -r -p | base64 | tr -d '\n' | tr '+/' '-_' | tr -d '=')
+    else
+        CONVERTED_KEY=$(printf "%s" "$HEX_KEY_LOWER" | sed 's/../\\x&/g' | xargs -0 printf 2>/dev/null | base64 | tr -d '\n' | tr '+/' '-_' | tr -d '=' || echo "")
+    fi
+    if [ ${#CONVERTED_KEY} -eq 44 ]; then
+        echo -n "$CONVERTED_KEY" > "$CONFIG_DIR/publickey.txt"
+        chmod 644 "$CONFIG_DIR/publickey.txt"
+        print_success "Public key converted from hex to base64url format!"
+        print_info "New key: $CONVERTED_KEY"
+        print_info "Key length: ${#CONVERTED_KEY} characters (correct)"
+        echo ""
+        print_success "Public key is now in correct format!"
+        print_info "You can now use this key in your client app:"
+        echo -e "${GREEN}$(cat "$CONFIG_DIR/publickey.txt")${NC}"
+        echo ""
+        exit 0
+    else
+        print_error "Conversion failed (result length: ${#CONVERTED_KEY}, expected: 44)"
+    fi
+# If it's already 44 characters (base64url), use it
+elif [ ${#BASE64_KEY} -eq 44 ] && [ "$BASE64_KEY" = "$CLEANED_KEY" ]; then
+    echo -n "$BASE64_KEY" > "$CONFIG_DIR/publickey.txt"
+    chmod 644 "$CONFIG_DIR/publickey.txt"
+    print_success "Public key is already in correct format!"
+    print_info "Key: $BASE64_KEY"
+    print_info "Key length: ${#BASE64_KEY} characters (correct)"
+    echo ""
+    exit 0
+# If it's 44 hex characters, use it
+elif [ ${#HEX_KEY} -eq 44 ]; then
+    echo -n "$HEX_KEY" > "$CONFIG_DIR/publickey.txt"
+    chmod 644 "$CONFIG_DIR/publickey.txt"
+    print_success "Public key is in correct format!"
+    print_info "Key: $HEX_KEY"
+    print_info "Key length: ${#HEX_KEY} characters (correct)"
+    echo ""
+    exit 0
+fi
+
+# Verify key length (should be exactly 44 or 64 characters)
+if [ ${#CLEANED_KEY} -ne 44 ] && [ ${#CLEANED_KEY} -ne 64 ]; then
     print_error "Public key has invalid length: ${#CLEANED_KEY} (expected: 44)"
     print_warning "The key may be corrupted or invalid"
     echo ""
