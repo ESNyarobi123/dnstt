@@ -111,9 +111,8 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR
-ExecStartPre=$INSTALL_DIR/setup-tun.sh
+ExecStartPre=/bin/bash -c 'if ! ip link show tun0 &>/dev/null; then ip tuntap add mode tun dev tun0 && ip addr add 10.0.0.1/24 dev tun0 && ip link set tun0 up; fi'
 ExecStart=$INSTALL_DIR/dnstt-server -udp :53 \\
-    -mtu 1800 \\
     -privkey-file $CONFIG_DIR/privatekey.txt \\
     -pubkey-file $CONFIG_DIR/publickey.txt \\
     -tun-dev tun0 \\

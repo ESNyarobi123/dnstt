@@ -510,9 +510,8 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR
-ExecStartPre=$INSTALL_DIR/setup-tun.sh
+ExecStartPre=/bin/bash -c 'if ! ip link show tun0 &>/dev/null; then ip tuntap add mode tun dev tun0 && ip addr add 10.0.0.1/24 dev tun0 && ip link set tun0 up; fi'
 ExecStart=$INSTALL_DIR/dnstt-server -udp :53 \\
-    -mtu 1800 \\
     -privkey-file $CONFIG_DIR/privatekey.txt \\
     -pubkey-file $CONFIG_DIR/publickey.txt \\
     -tun-dev tun0 \\
@@ -553,18 +552,43 @@ EOF
         print_warning "Failed to enable service (may already be enabled)"
     fi
     
+    # Check if port 53 is available before starting
+    print_info "Checking if port 53 is available..."
+    if netstat -tuln 2>/dev/null | grep -q ":53 " || ss -tuln 2>/dev/null | grep -q ":53 "; then
+        print_warning "Port 53 is already in use!"
+        print_info "Checking what's using port 53..."
+        
+        # Check if it's systemd-resolved
+        if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+            print_info "Stopping systemd-resolved..."
+            systemctl stop systemd-resolved 2>/dev/null || true
+            systemctl disable systemd-resolved 2>/dev/null || true
+            print_success "systemd-resolved stopped"
+        fi
+        
+        # Wait a bit for port to be released
+        sleep 2
+    else
+        print_success "Port 53 is available"
+    fi
+    
     # Start the service
     print_info "Starting dnstt-server service..."
     if systemctl start dnstt-server.service; then
-        sleep 2
+        sleep 3
         if systemctl is-active --quiet dnstt-server.service; then
             print_success "Systemd service created, enabled, and started successfully"
         else
-            print_warning "Service started but may not be active. Check status: systemctl status dnstt-server"
+            print_warning "Service started but may not be active. Checking logs..."
+            print_info "Error log (last 10 lines):"
+            tail -n 10 "$LOG_DIR/dnstt-error.log" 2>/dev/null || print_warning "Could not read error log"
+            print_info "Check status: systemctl status dnstt-server"
+            print_info "Check logs: journalctl -u dnstt-server -n 50"
         fi
     else
         print_warning "Failed to start service. Check logs: $LOG_DIR/dnstt-error.log"
         print_info "You can try to start it manually: systemctl start dnstt-server"
+        print_info "Or check what's using port 53: sudo netstat -tuln | grep :53"
     fi
     
     # Final verification
