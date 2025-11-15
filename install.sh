@@ -3,7 +3,8 @@
 # SKY NET SOLUTION - Advanced DNS Tunneling Installation Script
 # Modern, Fast, and Stable DNS over HTTPS/TLS Solution
 
-set -e
+# Don't exit on error - we'll handle errors manually
+set +e
 
 # Colors for beautiful UI
 RED='\033[0;31m'
@@ -155,10 +156,20 @@ install_dnstt() {
         print_info "Downloading dnstt source..."
         cd /tmp
         rm -rf dnstt
-        git clone https://www.bamsoftware.com/git/dnstt.git > /dev/null 2>&1
-        cd dnstt/dnstt-server
-        go build -o "$INSTALL_DIR/dnstt-server" > /dev/null 2>&1
-        print_success "dnstt-server compiled"
+        if git clone https://www.bamsoftware.com/git/dnstt.git > /dev/null 2>&1; then
+            cd dnstt/dnstt-server
+            if go build -o "$INSTALL_DIR/dnstt-server" > /dev/null 2>&1; then
+                print_success "dnstt-server compiled"
+            else
+                print_error "Failed to compile dnstt-server. Check Go installation."
+                return 1
+            fi
+        else
+            print_error "Failed to download dnstt source. Check internet connection."
+            return 1
+        fi
+    else
+        print_info "dnstt-server already exists, skipping download"
     fi
     
     # Generate keys if not exists
@@ -352,7 +363,13 @@ main_install() {
     check_root
     configure_system
     install_dependencies
-    install_dnstt
+    
+    # Try to install dnstt, but continue even if it fails
+    if ! install_dnstt; then
+        print_warning "dnstt installation had issues, but continuing..."
+    fi
+    
+    # Always install menu script
     install_menu_script
     
     # Get server information
