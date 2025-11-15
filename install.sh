@@ -154,22 +154,55 @@ install_dnstt() {
     # Create directories
     mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" "$DATA_DIR" "$LOG_DIR"
     
-    # Download and build dnstt
+    # Download and build dnstt (try official binary first, then build from source)
     if [ ! -f "$INSTALL_DIR/dnstt-server" ]; then
-        print_info "Downloading dnstt source..."
-        cd /tmp
-        rm -rf dnstt
-        if git clone https://www.bamsoftware.com/git/dnstt.git > /dev/null 2>&1; then
-            cd dnstt/dnstt-server
-            if go build -o "$INSTALL_DIR/dnstt-server" > /dev/null 2>&1; then
-                print_success "dnstt-server compiled"
+        # Try downloading official binary first (faster and more reliable)
+        print_info "Trying to download official dnstt-server binary..."
+        ARCH=$(uname -m)
+        case "$ARCH" in
+            x86_64|amd64)
+                DNSTT_URL="https://dnstt.network/dnstt-server-linux-amd64"
+                ;;
+            aarch64|arm64)
+                DNSTT_URL="https://dnstt.network/dnstt-server-linux-arm64"
+                ;;
+            *)
+                DNSTT_URL=""
+                print_warning "Architecture $ARCH not supported for official binary, will build from source"
+                ;;
+        esac
+        
+        if [ -n "$DNSTT_URL" ]; then
+            if curl -fsSL -o "$INSTALL_DIR/dnstt-server" "$DNSTT_URL" 2>/dev/null; then
+                chmod +x "$INSTALL_DIR/dnstt-server"
+                if [ -x "$INSTALL_DIR/dnstt-server" ]; then
+                    print_success "Official dnstt-server binary downloaded"
+                else
+                    print_warning "Downloaded binary not executable, will build from source"
+                    rm -f "$INSTALL_DIR/dnstt-server"
+                fi
             else
-                print_error "Failed to compile dnstt-server. Check Go installation."
+                print_warning "Failed to download official binary, will build from source"
+            fi
+        fi
+        
+        # If official binary failed or not available, build from source
+        if [ ! -f "$INSTALL_DIR/dnstt-server" ]; then
+            print_info "Building dnstt-server from source..."
+            cd /tmp
+            rm -rf dnstt
+            if git clone https://www.bamsoftware.com/git/dnstt.git > /dev/null 2>&1; then
+                cd dnstt/dnstt-server
+                if go build -o "$INSTALL_DIR/dnstt-server" > /dev/null 2>&1; then
+                    print_success "dnstt-server compiled from source"
+                else
+                    print_error "Failed to compile dnstt-server. Check Go installation."
+                    return 1
+                fi
+            else
+                print_error "Failed to download dnstt source. Check internet connection."
                 return 1
             fi
-        else
-            print_error "Failed to download dnstt source. Check internet connection."
-            return 1
         fi
     else
         print_info "dnstt-server already exists, skipping download"
@@ -384,6 +417,7 @@ TUNEOF
     chmod +x "$INSTALL_DIR/setup-tun.sh"
     
     # Create systemd service with proper configuration for 1800 bytes
+    # Using -mtu 1800 flag for maximum speed (like the reference script)
     cat > /etc/systemd/system/dnstt-server.service <<EOF
 [Unit]
 Description=DNS Tunnel Server (SKY NET SOLUTION)
@@ -396,6 +430,7 @@ User=root
 WorkingDirectory=$INSTALL_DIR
 ExecStartPre=$INSTALL_DIR/setup-tun.sh
 ExecStart=$INSTALL_DIR/dnstt-server -udp :53 \\
+    -mtu 1800 \\
     -privkey-file $CONFIG_DIR/privatekey.txt \\
     -pubkey-file $CONFIG_DIR/publickey.txt \\
     -tun-dev tun0 \\
@@ -562,10 +597,27 @@ main_install() {
     echo ""
     echo -e "${CYAN}${BOLD}  Server IP:${NC}     ${GREEN}${BOLD}$SERVER_IP${NC}"
     echo -e "${CYAN}${BOLD}  Nameserver (NS):${NC} ${GREEN}${BOLD}${NS_DOMAIN:-$SERVER_IP}${NC}"
-    echo -e "${CYAN}${BOLD}  Public Key:${NC}   ${GREEN}${BOLD}$PUBLIC_KEY${NC}"
     echo ""
     echo -e "${YELLOW}${BOLD}  DNS Configuration:${NC} ${GREEN}8.8.8.8, 8.8.4.4 (Google DNS)${NC}"
-    echo -e "${YELLOW}${BOLD}  Packet Size:${NC} ${GREEN}1800 bytes (Optimized for speed)${NC}"
+    echo -e "${YELLOW}${BOLD}  MTU Size:${NC} ${GREEN}1800 bytes (Maximum speed optimized)${NC}"
+    echo ""
+    echo -e "${MAGENTA}${BOLD}╔═══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${MAGENTA}${BOLD}║${NC} ${WHITE}${BOLD}                    PUBLIC KEY${NC} ${MAGENTA}${BOLD}                            ║${NC}"
+    echo -e "${MAGENTA}${BOLD}╚═══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    if [ -f "$CONFIG_DIR/publickey.txt" ]; then
+        FULL_PUBLIC_KEY=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r ')
+        echo -e "${CYAN}${BOLD}  Public Key (copy hii kwenye client):${NC}"
+        echo -e "${GREEN}${BOLD}  $FULL_PUBLIC_KEY${NC}"
+        echo ""
+        echo -e "${YELLOW}${BOLD}  ⚠ IMPORTANT:${NC} ${WHITE}Save this public key securely!${NC}"
+    else
+        echo -e "${RED}${BOLD}  Public Key:${NC} ${RED}Not generated${NC}"
+        echo -e "${YELLOW}${BOLD}  ⚠ WARNING:${NC} ${WHITE}Please run 'skynet-menu' and select option 4 to generate it${NC}"
+    fi
+    echo ""
+    echo -e "${MAGENTA}${BOLD}╔═══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${MAGENTA}${BOLD}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${MAGENTA}${BOLD}╔═══════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${MAGENTA}${BOLD}║${NC} ${WHITE}${BOLD}                        NEXT STEPS${NC} ${MAGENTA}${BOLD}                        ║${NC}"
