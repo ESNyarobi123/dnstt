@@ -315,15 +315,25 @@ install_menu_script() {
     if [ -f "./skynet-menu.sh" ]; then
         cp ./skynet-menu.sh "$INSTALL_DIR/skynet-menu.sh"
         chmod +x "$INSTALL_DIR/skynet-menu.sh"
-        
-        # Create symlink
-        ln -sf "$INSTALL_DIR/skynet-menu.sh" /usr/local/bin/skynet-menu 2>/dev/null || true
-        chmod +x /usr/local/bin/skynet-menu 2>/dev/null || true
-        
-        print_success "Management menu script installed"
+        print_success "Management menu script installed from local file"
     else
-        print_warning "skynet-menu.sh not found in current directory. Please install it manually."
+        # Download from GitHub if not found locally
+        print_info "Downloading menu script from GitHub..."
+        if wget -q https://raw.githubusercontent.com/ESNyarobi123/dnstt/main/skynet-menu.sh -O "$INSTALL_DIR/skynet-menu.sh" 2>/dev/null; then
+            chmod +x "$INSTALL_DIR/skynet-menu.sh"
+            print_success "Management menu script downloaded and installed"
+        else
+            print_error "Failed to download menu script. Please download it manually."
+            print_info "Run: wget https://raw.githubusercontent.com/ESNyarobi123/dnstt/main/skynet-menu.sh"
+            return 1
+        fi
     fi
+    
+    # Create symlink
+    ln -sf "$INSTALL_DIR/skynet-menu.sh" /usr/local/bin/skynet-menu 2>/dev/null || true
+    chmod +x /usr/local/bin/skynet-menu 2>/dev/null || true
+    
+    print_success "Menu command 'skynet-menu' is now available"
 }
 
 # Get server IP
