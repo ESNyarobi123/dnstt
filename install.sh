@@ -418,7 +418,9 @@ TUNEOF
     
     # Create systemd service with proper configuration for 1800 bytes
     # Using -mtu 1800 flag for maximum speed (like the reference script)
-    cat > /etc/systemd/system/dnstt-server.service <<EOF
+    SERVICE_FILE="/etc/systemd/system/dnstt-server.service"
+    
+    cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=DNS Tunnel Server (SKY NET SOLUTION)
 After=network.target
@@ -446,18 +448,52 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 EOF
 
-    systemctl daemon-reload
-    systemctl enable dnstt-server 2>/dev/null || true
+    # Verify service file was created
+    if [ ! -f "$SERVICE_FILE" ]; then
+        print_error "Failed to create service file at $SERVICE_FILE"
+        return 1
+    fi
+    
+    print_success "Service file created at: $SERVICE_FILE"
+    
+    # Reload systemd daemon
+    print_info "Reloading systemd daemon..."
+    if systemctl daemon-reload; then
+        print_success "Systemd daemon reloaded"
+    else
+        print_error "Failed to reload systemd daemon"
+        return 1
+    fi
+    
+    # Enable service
+    print_info "Enabling dnstt-server service..."
+    if systemctl enable dnstt-server.service; then
+        print_success "Service enabled"
+    else
+        print_warning "Failed to enable service (may already be enabled)"
+    fi
     
     # Start the service
     print_info "Starting dnstt-server service..."
-    systemctl start dnstt-server 2>/dev/null || true
-    sleep 2
-    
-    if systemctl is-active --quiet dnstt-server 2>/dev/null; then
-        print_success "Systemd service created, enabled, and started"
+    if systemctl start dnstt-server.service; then
+        sleep 2
+        if systemctl is-active --quiet dnstt-server.service; then
+            print_success "Systemd service created, enabled, and started successfully"
+        else
+            print_warning "Service started but may not be active. Check status: systemctl status dnstt-server"
+        fi
     else
-        print_warning "Service created but not started. Check logs: $LOG_DIR/dnstt-error.log"
+        print_warning "Failed to start service. Check logs: $LOG_DIR/dnstt-error.log"
+        print_info "You can try to start it manually: systemctl start dnstt-server"
+    fi
+    
+    # Final verification
+    if systemctl list-unit-files | grep -q "dnstt-server.service"; then
+        print_success "Service file is registered with systemd"
+    else
+        print_error "Service file is NOT registered with systemd!"
+        print_info "Service file location: $SERVICE_FILE"
+        print_info "Please check if the file exists and run: systemctl daemon-reload"
     fi
 }
 
