@@ -17,7 +17,7 @@ Modern, fast, and stable DNS over HTTPS/TLS solution with beautiful management i
 
 1. **Download the installation script:**
    ```bash
-   wget https://raw.githubusercontent.com/your-repo/dnstt/main/install.sh
+   wget https://raw.githubusercontent.com/ESNyarobi123/dnstt/main/install.sh
    ```
 
 2. **Make it executable:**
