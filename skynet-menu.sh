@@ -314,9 +314,29 @@ generate_new_key() {
     print_info "Generating new public key..."
     
     # Use dnstt-server binary to generate keys (better method)
+    # First, try to find dnstt-server binary
+    DNSTT_BIN=""
+    
+    # Check default installation directory
     if [ -f "$INSTALL_DIR/dnstt-server" ]; then
+        DNSTT_BIN="$INSTALL_DIR/dnstt-server"
+    # Check if it's in PATH
+    elif command -v dnstt-server >/dev/null 2>&1; then
+        DNSTT_BIN=$(command -v dnstt-server)
+    # Check common alternative locations
+    elif [ -f "/opt/skynet/dnstt-server" ]; then
+        DNSTT_BIN="/opt/skynet/dnstt-server"
+    elif [ -f "/usr/local/bin/dnstt-server" ]; then
+        DNSTT_BIN="/usr/local/bin/dnstt-server"
+    elif [ -f "/usr/bin/dnstt-server" ]; then
+        DNSTT_BIN="/usr/bin/dnstt-server"
+    fi
+    
+    # If binary found, use it to generate keys
+    if [ -n "$DNSTT_BIN" ] && [ -f "$DNSTT_BIN" ]; then
+        print_info "Found dnstt-server at: $DNSTT_BIN"
         # Generate new keys using dnstt-server
-        if "$INSTALL_DIR/dnstt-server" \
+        if "$DNSTT_BIN" \
             -gen-key \
             -privkey-file "$CONFIG_DIR/privatekey.txt" \
             -pubkey-file "$CONFIG_DIR/publickey.txt" > /dev/null 2>&1; then
@@ -337,79 +357,76 @@ generate_new_key() {
     else
         print_warning "dnstt-server binary not found at $INSTALL_DIR/dnstt-server"
         print_info "Checking alternative locations..."
-        
-        # Try to find dnstt-server in common locations
-        DNSTT_BIN=""
-        if [ -f "/opt/skynet/dnstt-server" ]; then
-            DNSTT_BIN="/opt/skynet/dnstt-server"
-            print_info "Found dnstt-server at $DNSTT_BIN"
-        elif [ -f "/usr/local/bin/dnstt-server" ]; then
-            DNSTT_BIN="/usr/local/bin/dnstt-server"
-            print_info "Found dnstt-server at $DNSTT_BIN"
-        elif [ -f "/usr/bin/dnstt-server" ]; then
-            DNSTT_BIN="/usr/bin/dnstt-server"
-            print_info "Found dnstt-server at $DNSTT_BIN"
-        fi
-        
-        if [ -n "$DNSTT_BIN" ] && [ -f "$DNSTT_BIN" ]; then
-            # Use found binary to generate keys
-            if "$DNSTT_BIN" \
-                -gen-key \
-                -privkey-file "$CONFIG_DIR/privatekey.txt" \
-                -pubkey-file "$CONFIG_DIR/publickey.txt" > /dev/null 2>&1; then
-                
-                if [ -f "$CONFIG_DIR/publickey.txt" ] && [ -f "$CONFIG_DIR/privatekey.txt" ]; then
-                    NEW_KEY=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r ')
-                    chmod 600 "$CONFIG_DIR/privatekey.txt"
-                    chmod 644 "$CONFIG_DIR/publickey.txt"
-                    print_success "Keys generated successfully using dnstt-server"
-                else
-                    print_error "Key files were not created"
-                    NEW_KEY=""
-                fi
-            else
-                print_error "Key generation failed with found binary"
-                NEW_KEY=""
-            fi
-        else
-            print_error "dnstt-server binary not found anywhere!"
-            NEW_KEY=""
-        fi
+        print_warning "dnstt-server binary not found anywhere!"
+        print_info "This usually means dnstt-server is not installed or not in PATH"
+        print_info "If you haven't run the installation script, please run: sudo ./install.sh"
+        NEW_KEY=""
     fi
     
     # Fallback method if dnstt-server method failed
     if [ -z "$NEW_KEY" ] || [ ! -f "$CONFIG_DIR/publickey.txt" ]; then
         print_info "Trying fallback key generation method..."
-        cd /tmp
-        rm -rf dnstt-keygen-tmp
-        if git clone https://www.bamsoftware.com/git/dnstt.git dnstt-keygen-tmp > /dev/null 2>&1; then
-            if [ -d "dnstt-keygen-tmp/dnstt-keygen" ]; then
-                cd dnstt-keygen-tmp/dnstt-keygen
-                go run . > "$CONFIG_DIR/keygen_output_new.txt" 2>&1
-                
-                # Extract keys
-                PRIVATE_KEY=$(grep "Private key:" "$CONFIG_DIR/keygen_output_new.txt" | awk '{print $3}')
-                NEW_KEY=$(grep "Public key:" "$CONFIG_DIR/keygen_output_new.txt" | awk '{print $3}')
-                
-                if [ -z "$NEW_KEY" ]; then
-                    # Try alternative extraction
-                    NEW_KEY=$(grep -oP 'Public key: \K[^\s]+' "$CONFIG_DIR/keygen_output_new.txt" 2>/dev/null | head -n 1)
+        print_info "This will download and use dnstt-keygen tool..."
+        
+        # Check if git is available
+        if ! command -v git >/dev/null 2>&1; then
+            print_error "git is not installed. Cannot use fallback method."
+            print_info "Please install git or run the installation script: sudo ./install.sh"
+        # Check if go is available
+        elif ! command -v go >/dev/null 2>&1; then
+            print_error "Go compiler is not installed. Cannot use fallback method."
+            print_info "Please install golang-go or run the installation script: sudo ./install.sh"
+        else
+            cd /tmp
+            rm -rf dnstt-keygen-tmp
+            print_info "Downloading dnstt source code..."
+            if git clone https://www.bamsoftware.com/git/dnstt.git dnstt-keygen-tmp > /dev/null 2>&1; then
+                if [ -d "dnstt-keygen-tmp/dnstt-keygen" ]; then
+                    cd dnstt-keygen-tmp/dnstt-keygen
+                    print_info "Generating keys using dnstt-keygen..."
+                    go run . > "$CONFIG_DIR/keygen_output_new.txt" 2>&1
+                    
+                    # Extract keys
+                    PRIVATE_KEY=$(grep "Private key:" "$CONFIG_DIR/keygen_output_new.txt" | awk '{print $3}')
+                    NEW_KEY=$(grep "Public key:" "$CONFIG_DIR/keygen_output_new.txt" | awk '{print $3}')
+                    
+                    if [ -z "$NEW_KEY" ]; then
+                        # Try alternative extraction
+                        NEW_KEY=$(grep -oP 'Public key: \K[^\s]+' "$CONFIG_DIR/keygen_output_new.txt" 2>/dev/null | head -n 1)
+                    fi
+                    
+                    if [ -n "$PRIVATE_KEY" ] && [ -n "$NEW_KEY" ]; then
+                        echo "$PRIVATE_KEY" > "$CONFIG_DIR/privatekey.txt"
+                        echo "$NEW_KEY" > "$CONFIG_DIR/publickey.txt"
+                        chmod 600 "$CONFIG_DIR/privatekey.txt"
+                        chmod 644 "$CONFIG_DIR/publickey.txt"
+                        print_success "Keys generated using fallback method"
+                        # Clean up
+                        cd /tmp
+                        rm -rf dnstt-keygen-tmp
+                    else
+                        print_error "Failed to extract keys from keygen output"
+                        print_info "Check output file: $CONFIG_DIR/keygen_output_new.txt"
+                    fi
+                else
+                    print_error "dnstt-keygen directory not found in downloaded source"
                 fi
-                
-                if [ -n "$PRIVATE_KEY" ] && [ -n "$NEW_KEY" ]; then
-                    echo "$PRIVATE_KEY" > "$CONFIG_DIR/privatekey.txt"
-                    echo "$NEW_KEY" > "$CONFIG_DIR/publickey.txt"
-                    chmod 600 "$CONFIG_DIR/privatekey.txt"
-                    chmod 644 "$CONFIG_DIR/publickey.txt"
-                    print_success "Keys generated using fallback method"
-                fi
+            else
+                print_error "Failed to download dnstt source code"
+                print_info "Please check your internet connection"
             fi
         fi
     fi
     
     # Final check
     if [ -z "$NEW_KEY" ] || [ ! -f "$CONFIG_DIR/publickey.txt" ]; then
-        print_error "Failed to generate keys. Please check dnstt-server installation."
+        print_error "Failed to generate keys using all available methods."
+        echo ""
+        print_info "Possible solutions:"
+        print_info "1. Run the installation script: sudo ./install.sh"
+        print_info "2. Make sure dnstt-server is installed at: $INSTALL_DIR/dnstt-server"
+        print_info "3. Check that git and golang-go are installed"
+        echo ""
         sleep 3
         return 1
     fi

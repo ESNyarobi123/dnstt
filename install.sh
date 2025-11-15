@@ -236,6 +236,76 @@ generate_keys() {
     fi
 }
 
+# Ensure public key is generated (final check before completion)
+ensure_public_key_generated() {
+    print_info "Verifying public key generation..."
+    
+    # Check if public key exists and is valid
+    if [ -f "$CONFIG_DIR/publickey.txt" ] && [ -f "$CONFIG_DIR/privatekey.txt" ]; then
+        PUBLIC_KEY_CONTENT=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r ' | head -c 44)
+        if [ -n "$PUBLIC_KEY_CONTENT" ] && [ ${#PUBLIC_KEY_CONTENT} -ge 40 ]; then
+            print_success "Public key verified: $PUBLIC_KEY_CONTENT"
+            return 0
+        else
+            print_warning "Public key file exists but appears invalid, regenerating..."
+            rm -f "$CONFIG_DIR/publickey.txt" "$CONFIG_DIR/privatekey.txt"
+        fi
+    fi
+    
+    # If we reach here, keys don't exist or are invalid - generate them
+    print_info "Generating public key now..."
+    
+    # Try using dnstt-server first
+    if [ -f "$INSTALL_DIR/dnstt-server" ]; then
+        "$INSTALL_DIR/dnstt-server" \
+            -gen-key \
+            -privkey-file "$CONFIG_DIR/privatekey.txt" \
+            -pubkey-file "$CONFIG_DIR/publickey.txt" > /dev/null 2>&1
+        
+        if [ -f "$CONFIG_DIR/publickey.txt" ] && [ -f "$CONFIG_DIR/privatekey.txt" ]; then
+            chmod 600 "$CONFIG_DIR/privatekey.txt"
+            chmod 644 "$CONFIG_DIR/publickey.txt"
+            PUBLIC_KEY_CONTENT=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r ' | head -c 44)
+            if [ -n "$PUBLIC_KEY_CONTENT" ] && [ ${#PUBLIC_KEY_CONTENT} -ge 40 ]; then
+                print_success "Public key generated successfully: $PUBLIC_KEY_CONTENT"
+                return 0
+            fi
+        fi
+    fi
+    
+    # Fallback: try using dnstt-keygen if available
+    print_info "Trying fallback method to generate keys..."
+    cd /tmp
+    rm -rf dnstt-keygen-final
+    if git clone https://www.bamsoftware.com/git/dnstt.git dnstt-keygen-final > /dev/null 2>&1; then
+        if [ -d "dnstt-keygen-final/dnstt-keygen" ]; then
+            cd dnstt-keygen-final/dnstt-keygen
+            go run . > "$CONFIG_DIR/keygen_final_output.txt" 2>&1
+            PRIVATE_KEY=$(grep "Private key:" "$CONFIG_DIR/keygen_final_output.txt" | awk '{print $3}')
+            PUBLIC_KEY=$(grep "Public key:" "$CONFIG_DIR/keygen_final_output.txt" | awk '{print $3}')
+            if [ -z "$PUBLIC_KEY" ]; then
+                PUBLIC_KEY=$(grep -oP 'Public key: \K[^\s]+' "$CONFIG_DIR/keygen_final_output.txt" 2>/dev/null | head -n 1)
+            fi
+            if [ -n "$PRIVATE_KEY" ] && [ -n "$PUBLIC_KEY" ]; then
+                echo "$PRIVATE_KEY" > "$CONFIG_DIR/privatekey.txt"
+                echo "$PUBLIC_KEY" > "$CONFIG_DIR/publickey.txt"
+                chmod 600 "$CONFIG_DIR/privatekey.txt"
+                chmod 644 "$CONFIG_DIR/publickey.txt"
+                print_success "Public key generated using fallback method: $PUBLIC_KEY"
+                cd /tmp
+                rm -rf dnstt-keygen-final
+                return 0
+            fi
+            cd /tmp
+            rm -rf dnstt-keygen-final
+        fi
+    fi
+    
+    # If all methods failed
+    print_error "Failed to generate public key using all available methods"
+    return 1
+}
+
 # Configure DNS bytes handling (512/1800)
 configure_dns_bytes() {
     print_info "Configuring DNS for optimal 512/1800 bytes handling..."
@@ -462,12 +532,18 @@ main_install() {
     # Always install menu script
     install_menu_script
     
+    # Ensure public key is generated before completion
+    print_info "Final verification: Ensuring public key is generated..."
+    if ! ensure_public_key_generated; then
+        print_error "WARNING: Public key generation failed. Please run 'skynet-menu' and select option 4 to generate it manually."
+    fi
+    
     # Get server information
     SERVER_IP=$(get_server_ip)
     if [ -f "$CONFIG_DIR/publickey.txt" ]; then
         PUBLIC_KEY=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r ' | head -c 44)
     else
-        PUBLIC_KEY="Not generated"
+        PUBLIC_KEY="Not generated - Please run 'skynet-menu' option 4"
     fi
     
     # Load NS Domain
