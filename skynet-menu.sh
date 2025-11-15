@@ -73,7 +73,8 @@ get_server_ip() {
 # Get public key
 get_public_key() {
     if [ -f "$CONFIG_DIR/publickey.txt" ]; then
-        cat "$CONFIG_DIR/publickey.txt"
+        # Read and trim the key
+        cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r ' | head -c 44
     else
         echo "Not generated"
     fi
@@ -92,7 +93,8 @@ add_user() {
     echo -e "${CYAN}${BOLD}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
     
-    read -p "$(echo -e ${CYAN}Enter Username: ${NC})" username
+    echo -ne "${CYAN}Enter Username: ${NC}"
+    read username
     
     if [ -z "$username" ]; then
         print_error "Username cannot be empty!"
@@ -107,7 +109,8 @@ add_user() {
         return
     fi
     
-    read -sp "$(echo -e ${CYAN}Enter Password (leave empty for auto-generate): ${NC})" password
+    echo -ne "${CYAN}Enter Password (leave empty for auto-generate): ${NC}"
+    read -s password
     echo ""
     
     if [ -z "$password" ]; then
@@ -115,7 +118,8 @@ add_user() {
         print_info "Auto-generated password: $password"
     fi
     
-    read -p "$(echo -e ${CYAN}Enter Expire Date (YYYY-MM-DD): ${NC})" expire_date
+    echo -ne "${CYAN}Enter Expire Date (YYYY-MM-DD): ${NC}"
+    read expire_date
     
     if [ -z "$expire_date" ]; then
         print_error "Expire date cannot be empty!"
@@ -156,7 +160,8 @@ EOF
     echo -e "${MAGENTA}${BOLD}╔═══════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${MAGENTA}${BOLD}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    read -p "$(echo -e ${YELLOW}Press Enter to continue...${NC})"
+    echo -ne "${YELLOW}Press Enter to continue...${NC}"
+    read
 }
 
 # Show users
@@ -207,7 +212,8 @@ show_users() {
     
     echo -e "${CYAN}${BOLD}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
-    read -p "$(echo -e ${YELLOW}Press Enter to continue...${NC})"
+    echo -ne "${YELLOW}Press Enter to continue...${NC}"
+    read
 }
 
 # Change nameserver
@@ -222,7 +228,8 @@ change_nameserver() {
     echo -e "${WHITE}Current Nameserver:${NC} ${GREEN}$CURRENT_NS${NC}"
     echo ""
     
-    read -p "$(echo -e ${CYAN}Enter New Nameserver IP: ${NC})" new_ns
+    echo -ne "${CYAN}Enter New Nameserver IP: ${NC}"
+    read new_ns
     
     if [ -z "$new_ns" ]; then
         print_error "Nameserver cannot be empty!"
@@ -261,7 +268,8 @@ change_nameserver() {
     echo ""
     echo -e "${YELLOW}${BOLD}  ⚠ Note:${NC} ${WHITE}All existing users now use this nameserver${NC}"
     echo ""
-    read -p "$(echo -e ${YELLOW}Press Enter to continue...${NC})"
+    echo -ne "${YELLOW}Press Enter to continue...${NC}"
+    read
 }
 
 # Generate new public key
@@ -276,7 +284,8 @@ generate_new_key() {
     echo -e "${WHITE}Current Public Key:${NC} ${GREEN}$OLD_KEY${NC}"
     echo ""
     
-    read -p "$(echo -e ${YELLOW}Are you sure you want to generate a new public key? (y/n): ${NC})" confirm
+    echo -ne "${YELLOW}Are you sure you want to generate a new public key? (y/n): ${NC}"
+    read confirm
     
     if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
         print_info "Operation cancelled"
@@ -286,37 +295,67 @@ generate_new_key() {
     
     print_info "Generating new public key..."
     
-    # Generate new key using dnstt-keygen
-    cd /tmp
-    rm -rf dnstt-keygen-tmp
-    git clone https://www.bamsoftware.com/git/dnstt.git dnstt-keygen-tmp > /dev/null 2>&1
-    
-    if [ -d "dnstt-keygen-tmp/dnstt-keygen" ]; then
-        cd dnstt-keygen-tmp/dnstt-keygen
-        go run . > "$CONFIG_DIR/keygen_output_new.txt" 2>&1
+    # Use dnstt-server binary to generate keys (better method)
+    if [ -f "$INSTALL_DIR/dnstt-server" ]; then
+        # Generate new keys using dnstt-server
+        "$INSTALL_DIR/dnstt-server" \
+            -gen-key \
+            -privkey-file "$CONFIG_DIR/privatekey.txt" \
+            -pubkey-file "$CONFIG_DIR/publickey.txt" > /dev/null 2>&1
         
-        # Extract keys
-        PRIVATE_KEY=$(grep "Private key:" "$CONFIG_DIR/keygen_output_new.txt" | awk '{print $3}')
-        NEW_KEY=$(grep "Public key:" "$CONFIG_DIR/keygen_output_new.txt" | awk '{print $3}')
-        
-        if [ -z "$NEW_KEY" ]; then
-            # Try alternative extraction
-            NEW_KEY=$(grep -oP 'Public key: \K[^\s]+' "$CONFIG_DIR/keygen_output_new.txt" | head -n 1)
-        fi
-        
-        if [ -n "$PRIVATE_KEY" ]; then
-            echo "$PRIVATE_KEY" > "$CONFIG_DIR/privatekey.txt"
+        if [ -f "$CONFIG_DIR/publickey.txt" ] && [ -f "$CONFIG_DIR/privatekey.txt" ]; then
+            NEW_KEY=$(cat "$CONFIG_DIR/publickey.txt")
             chmod 600 "$CONFIG_DIR/privatekey.txt"
+            chmod 644 "$CONFIG_DIR/publickey.txt"
+            print_success "Keys generated successfully using dnstt-server"
+        else
+            print_error "Failed to generate keys using dnstt-server, trying fallback..."
+            NEW_KEY=""
+        fi
+    else
+        print_warning "dnstt-server binary not found"
+        NEW_KEY=""
+    fi
+    
+    # Fallback method if dnstt-server method failed
+    if [ -z "$NEW_KEY" ] || [ ! -f "$CONFIG_DIR/publickey.txt" ]; then
+        print_info "Trying fallback key generation method..."
+        cd /tmp
+        rm -rf dnstt-keygen-tmp
+        if git clone https://www.bamsoftware.com/git/dnstt.git dnstt-keygen-tmp > /dev/null 2>&1; then
+            if [ -d "dnstt-keygen-tmp/dnstt-keygen" ]; then
+                cd dnstt-keygen-tmp/dnstt-keygen
+                go run . > "$CONFIG_DIR/keygen_output_new.txt" 2>&1
+                
+                # Extract keys
+                PRIVATE_KEY=$(grep "Private key:" "$CONFIG_DIR/keygen_output_new.txt" | awk '{print $3}')
+                NEW_KEY=$(grep "Public key:" "$CONFIG_DIR/keygen_output_new.txt" | awk '{print $3}')
+                
+                if [ -z "$NEW_KEY" ]; then
+                    # Try alternative extraction
+                    NEW_KEY=$(grep -oP 'Public key: \K[^\s]+' "$CONFIG_DIR/keygen_output_new.txt" 2>/dev/null | head -n 1)
+                fi
+                
+                if [ -n "$PRIVATE_KEY" ] && [ -n "$NEW_KEY" ]; then
+                    echo "$PRIVATE_KEY" > "$CONFIG_DIR/privatekey.txt"
+                    echo "$NEW_KEY" > "$CONFIG_DIR/publickey.txt"
+                    chmod 600 "$CONFIG_DIR/privatekey.txt"
+                    chmod 644 "$CONFIG_DIR/publickey.txt"
+                    print_success "Keys generated using fallback method"
+                fi
+            fi
         fi
     fi
     
-    if [ -z "$NEW_KEY" ]; then
-        print_error "Failed to generate key using dnstt-keygen, using fallback method..."
-        NEW_KEY=$(openssl rand -hex 32 | base64 | tr -d '\n' | cut -c1-44)
+    # Final check
+    if [ -z "$NEW_KEY" ] || [ ! -f "$CONFIG_DIR/publickey.txt" ]; then
+        print_error "Failed to generate keys. Please check dnstt-server installation."
+        sleep 3
+        return 1
     fi
     
-    # Save new key
-    echo "$NEW_KEY" > "$CONFIG_DIR/publickey.txt"
+    # Read the actual key from file
+    NEW_KEY=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r ')
     
     # Update all users
     if [ -d "$DATA_DIR/users" ]; then
@@ -344,7 +383,8 @@ generate_new_key() {
     echo -e "${YELLOW}${BOLD}  ⚠ Note:${NC} ${WHITE}All existing users have been updated with the new public key${NC}"
     echo -e "${YELLOW}${BOLD}  ⚠ Note:${NC} ${WHITE}Service has been restarted to apply changes${NC}"
     echo ""
-    read -p "$(echo -e ${YELLOW}Press Enter to continue...${NC})"
+    echo -ne "${YELLOW}Press Enter to continue...${NC}"
+    read
 }
 
 # Show server info
@@ -387,7 +427,8 @@ show_server_info() {
     echo -e "${MAGENTA}${BOLD}╔═══════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${MAGENTA}${BOLD}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    read -p "$(echo -e ${YELLOW}Press Enter to continue...${NC})"
+    echo -ne "${YELLOW}Press Enter to continue...${NC}"
+    read
 }
 
 # Main menu
@@ -407,7 +448,8 @@ main_menu() {
         echo ""
         echo -e "${CYAN}${BOLD}═══════════════════════════════════════════════════════════════${NC}"
         echo ""
-        read -p "$(echo -e ${CYAN}Select option: ${NC})" option
+        echo -ne "${CYAN}Select option: ${NC}"
+    read option
         
         case $option in
             1)

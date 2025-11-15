@@ -174,19 +174,43 @@ install_dnstt() {
     
     # Generate keys if not exists
     if [ ! -f "$CONFIG_DIR/publickey.txt" ] || [ ! -f "$CONFIG_DIR/privatekey.txt" ]; then
-        print_info "Generating keys..."
-        cd /tmp/dnstt/dnstt-keygen
-        go run . > "$CONFIG_DIR/keygen_output.txt" 2>&1
+        print_info "Generating keys using dnstt-server..."
         
-        # Extract keys
-        PRIVATE_KEY=$(grep "Private key:" "$CONFIG_DIR/keygen_output.txt" | awk '{print $3}')
-        PUBLIC_KEY=$(grep "Public key:" "$CONFIG_DIR/keygen_output.txt" | awk '{print $3}')
-        
-        echo "$PRIVATE_KEY" > "$CONFIG_DIR/privatekey.txt"
-        echo "$PUBLIC_KEY" > "$CONFIG_DIR/publickey.txt"
-        
-        chmod 600 "$CONFIG_DIR/privatekey.txt"
-        print_success "Keys generated"
+        if [ -f "$INSTALL_DIR/dnstt-server" ]; then
+            # Use dnstt-server binary to generate keys (better method)
+            "$INSTALL_DIR/dnstt-server" \
+                -gen-key \
+                -privkey-file "$CONFIG_DIR/privatekey.txt" \
+                -pubkey-file "$CONFIG_DIR/publickey.txt" 2>&1
+            
+            if [ -f "$CONFIG_DIR/privatekey.txt" ] && [ -f "$CONFIG_DIR/publickey.txt" ]; then
+                chmod 600 "$CONFIG_DIR/privatekey.txt"
+                chmod 644 "$CONFIG_DIR/publickey.txt"
+                print_success "Keys generated successfully"
+            else
+                print_error "Key generation failed, trying alternative method..."
+                # Fallback to keygen tool
+                if [ -d "/tmp/dnstt/dnstt-keygen" ]; then
+                    cd /tmp/dnstt/dnstt-keygen
+                    go run . > "$CONFIG_DIR/keygen_output.txt" 2>&1
+                    PRIVATE_KEY=$(grep "Private key:" "$CONFIG_DIR/keygen_output.txt" | awk '{print $3}')
+                    PUBLIC_KEY=$(grep "Public key:" "$CONFIG_DIR/keygen_output.txt" | awk '{print $3}')
+                    if [ -n "$PRIVATE_KEY" ] && [ -n "$PUBLIC_KEY" ]; then
+                        echo "$PRIVATE_KEY" > "$CONFIG_DIR/privatekey.txt"
+                        echo "$PUBLIC_KEY" > "$CONFIG_DIR/publickey.txt"
+                        chmod 600 "$CONFIG_DIR/privatekey.txt"
+                        chmod 644 "$CONFIG_DIR/publickey.txt"
+                        print_success "Keys generated using fallback method"
+                    else
+                        print_error "Failed to generate keys"
+                    fi
+                fi
+            fi
+        else
+            print_warning "dnstt-server binary not found, keys will be generated later"
+        fi
+    else
+        print_info "Keys already exist, skipping generation"
     fi
     
     # Configure DNS for 512/1800 bytes handling
@@ -374,7 +398,11 @@ main_install() {
     
     # Get server information
     SERVER_IP=$(get_server_ip)
-    PUBLIC_KEY=$(cat "$CONFIG_DIR/publickey.txt" 2>/dev/null || echo "Not generated")
+    if [ -f "$CONFIG_DIR/publickey.txt" ]; then
+        PUBLIC_KEY=$(cat "$CONFIG_DIR/publickey.txt" | tr -d '\n\r ' | head -c 44)
+    else
+        PUBLIC_KEY="Not generated"
+    fi
     
     echo ""
     echo -e "${CYAN}${BOLD}═══════════════════════════════════════════════════════════════${NC}"
